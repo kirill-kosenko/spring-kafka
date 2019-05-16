@@ -1,71 +1,86 @@
 package com.demo;
 
-import org.apache.kafka.clients.producer.ProducerConfig;
-import org.apache.kafka.common.serialization.StringSerializer;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.kafka.common.protocol.types.Field;
+import org.apache.kafka.common.serialization.Deserializer;
+import org.apache.kafka.common.serialization.Serde;
+import org.apache.kafka.common.serialization.Serdes;
+import org.apache.kafka.common.serialization.Serializer;
+import org.apache.kafka.common.utils.Bytes;
+import org.apache.kafka.connect.json.JsonDeserializer;
+import org.apache.kafka.connect.json.JsonSerializer;
+import org.apache.kafka.streams.KafkaStreams;
+import org.apache.kafka.streams.StreamsBuilder;
+import org.apache.kafka.streams.StreamsConfig;
+import org.apache.kafka.streams.kstream.KStream;
+import org.apache.kafka.streams.kstream.KTable;
+import org.apache.kafka.streams.kstream.Materialized;
+import org.apache.kafka.streams.kstream.Printed;
+import org.apache.kafka.streams.processor.WallclockTimestampExtractor;
+import org.apache.kafka.streams.state.KeyValueStore;
+import org.apache.kafka.streams.state.QueryableStoreType;
+import org.apache.kafka.streams.state.QueryableStoreTypes;
+import org.apache.kafka.streams.state.ReadOnlyKeyValueStore;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.boot.autoconfigure.kafka.ConcurrentKafkaListenerContainerFactoryConfigurer;
 import org.springframework.context.annotation.Bean;
-import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
-import org.springframework.kafka.core.ConsumerFactory;
-import org.springframework.kafka.core.DefaultKafkaProducerFactory;
-import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.kafka.core.ProducerFactory;
-import org.springframework.kafka.listener.AbstractMessageListenerContainer;
-import org.springframework.kafka.listener.SeekToCurrentErrorHandler;
-import org.springframework.kafka.transaction.ChainedKafkaTransactionManager;
-import org.springframework.kafka.transaction.KafkaTransactionManager;
-import org.springframework.retry.support.RetryTemplate;
+import org.springframework.kafka.annotation.EnableKafkaStreams;
+import org.springframework.kafka.annotation.KafkaStreamsDefaultConfiguration;
+import org.springframework.kafka.core.StreamsBuilderFactoryBean;
+import org.springframework.util.StringUtils;
 
+import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 
+import static org.apache.kafka.streams.kstream.Materialized.as;
+
 @SpringBootApplication
+@EnableKafkaStreams
 public class SpringBootWithKafkaApplication {
 
 	public static void main(String[] args) {
 		SpringApplication.run(SpringBootWithKafkaApplication.class, args);
 	}
 
+	@Bean(name = KafkaStreamsDefaultConfiguration.DEFAULT_STREAMS_CONFIG_BEAN_NAME)
+	public StreamsConfig kStreamsConfigs() throws Exception {
+		Map<String, Object> props = new HashMap<>();
+		props.put(StreamsConfig.APPLICATION_ID_CONFIG, "testStreams");
+		props.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:19092");
+		props.put(StreamsConfig.DEFAULT_KEY_SERDE_CLASS_CONFIG, Serdes.String().getClass().getName());
+		props.put(StreamsConfig.DEFAULT_VALUE_SERDE_CLASS_CONFIG, Serdes.String().getClass().getName());
+		props.put(StreamsConfig.DEFAULT_TIMESTAMP_EXTRACTOR_CLASS_CONFIG, WallclockTimestampExtractor.class.getName());
+		return new StreamsConfig(props);
+	}
 
-//	@Bean
-//	public ProducerFactory<String, String> producerCommandFactory() {
-//		final Map<String, Object> config = new HashMap<>();
-//		config.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:19092");
-//		config.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
-//		config.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
-//		config.put(ProducerConfig.MAX_IN_FLIGHT_REQUESTS_PER_CONNECTION, 1);
-//		config.put(ProducerConfig.RETRIES_CONFIG, Integer.MAX_VALUE);
-//		config.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true);
-//		config.put(ProducerConfig.TRANSACTIONAL_ID_CONFIG, "command-tx");
-//		final DefaultKafkaProducerFactory<String, String> factory =
-//				new DefaultKafkaProducerFactory<>(config);
-//		factory.setTransactionIdPrefix("command-tx");
-//		return factory;
-//	}
-//
-//	@Bean
-//	public KafkaTemplate<String, String> kafkaCommandTemplate(ProducerFactory<String, String> factory) {
-//		return new KafkaTemplate<>(factory);
-//	}
+	@Autowired
+	ObjectMapper objectMapper;
 
-//	@Autowired
-//	public ProducerFactory<String, String> producerFactory;
-//
-//	@Autowired
-//	public ConsumerFactory<String, String> consumerFactory;
-//
-//	@Bean
-//	public ConcurrentKafkaListenerContainerFactory kafkaListenerContainerFactory() {
-//		ConcurrentKafkaListenerContainerFactory<String, String> factory = new ConcurrentKafkaListenerContainerFactory();
-//		factory.setConsumerFactory(consumerFactory);
-//		factory.getContainerProperties().setAckOnError(false);
-//		factory.getContainerProperties().setAckMode(AbstractMessageListenerContainer.AckMode.RECORD);
-//		factory.getContainerProperties().setErrorHandler((thrownException, data) -> System.out.println("#### Exception " + thrownException.getMessage()));
-////		factory.setRetryTemplate(new RetryTemplate());
-//		factory.getContainerProperties().setTransactionManager(new KafkaTransactionManager<>(producerFactory));
-//
-//		return factory;
-//	}
+	@Bean
+	public KTable<String, String> companyAggregate(StreamsBuilder streamsBuilder) {
+		KStream<String, String> stream = streamsBuilder.stream("event_company");
+		final KTable<String, String> companyAggregateTable = stream.groupByKey().aggregate(() -> "", this::aggregator,
+				Materialized.as("companyAggregate"));
+
+		stream.print(Printed.toSysOut());
+		return companyAggregateTable;
+	}
+
+	private String aggregator(final String key, final String value, final String aggregate) {
+		try {
+//			Temporal dirty hack
+			Map<String, String> valueMap = objectMapper.readValue(value, Map.class);
+			Map<String, String> aggregateMap = StringUtils.isEmpty(aggregate)
+				? new HashMap<>()
+				:objectMapper.readValue(aggregate, Map.class);
+			aggregateMap.putAll(valueMap);
+			return objectMapper.writeValueAsString(aggregateMap);
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+		return aggregate;
+	}
 }

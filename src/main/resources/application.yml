@@ -7,16 +7,20 @@ spring:
       group-id: group_id
       auto-offset-reset: earliest
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
-#      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
       properties:
         isolation.level: read_committed
+        spring:
+          json:
+            trusted:
+              packages: com.demo.commands,com.demo.events
       enable-auto-commit: false
     producer:
       bootstrap-servers: localhost:19092
       transaction-id-prefix: tx.
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
-#      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
       properties:
         enable.idempotence: true
     listener:
-      ack-mode: RECORD
+      ack-mode: MANUAL
