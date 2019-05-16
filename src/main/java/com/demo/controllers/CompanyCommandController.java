@@ -4,6 +4,7 @@ import com.demo.commands.CreateCompanyCommand;
 import com.demo.dto.commands.CompanyCreateDTO;
 import com.demo.engine.Producer;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.PostMapping;
