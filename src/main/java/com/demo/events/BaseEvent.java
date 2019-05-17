@@ -1,6 +1,8 @@
 package com.demo.events;
 
-public class BaseEvent<T> {
+import com.demo.serde.JSONSerdeCompatible;
+
+public class BaseEvent<T> implements JSONSerdeCompatible {
 
     public T id;
 
